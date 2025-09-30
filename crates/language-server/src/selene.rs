@@ -1,34 +1,37 @@
 use serde::Deserialize;
-use tempfile::NamedTempFile;
-use tokio::process;
+use std::process::Stdio;
+use tokio::{io::AsyncWriteExt, process};
 
 pub async fn run_selene(text: &str) -> Vec<tower_lsp::lsp_types::Diagnostic> {
-    let tmp = make_temp_file(text);
-
-    let output = process::Command::new("selene")
-        .arg(tmp.path())
+    let mut child = process::Command::new("selene")
+        .arg("-")
         .arg("--display-style=Json")
         .arg("--no-summary")
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to run selene");
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes()).await.unwrap();
+        drop(stdin);
+    }
+
+    let output = child
+        .wait_with_output()
         .await
         .expect("Failed to run selene");
 
-    let stdout = String::from_utf8(output.stdout).expect("Failed to parse selene output");
-
-    stdout
-        .lines()
+    output
+        .stdout
+        .split(|&b| b == b'\n')
+        .filter(|line| !line.is_empty())
         .map(|line| {
             let diag: SeleneDiagnostic =
-                serde_json::from_str(line).expect("Failed to parse selene output");
+                serde_json::from_slice(line).expect("Failed to parse selene output");
             diag.into()
         })
         .collect()
-}
-
-fn make_temp_file(text: &str) -> NamedTempFile {
-    let mut tmp = tempfile::NamedTempFile::new().expect("Failed to create temp file");
-    std::io::Write::write_all(&mut tmp, text.as_bytes()).expect("Failed to write temp file");
-    tmp
 }
 
 #[derive(Debug, Deserialize)]
