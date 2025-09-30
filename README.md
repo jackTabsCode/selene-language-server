@@ -30,4 +30,4 @@ You should probably just use the [official extension](https://marketplace.visual
 
 ### Other Editors
 
-I don't know.
+I don't know, but it should be straightforward because it implements LSP.
