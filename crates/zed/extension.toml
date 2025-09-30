@@ -1,0 +1,12 @@
+id = "selene"
+name = "Selene Language Server"
+description = "Selene support for Zed"
+version = "0.1.0"
+schema_version = 1
+authors = ["Jack Taylor <j@jackt.io>"]
+repository = "https://github.com/jackTabsCode/selene-language-server"
+
+[language_servers.selene]
+name = "Selene Language Server"
+language = "Lua"
+languages = ["Lua", "Luau"]
