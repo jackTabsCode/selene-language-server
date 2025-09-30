@@ -1,3 +1,5 @@
 *target/
 *.wasm
 test.lua
+test.luau
+selene.toml

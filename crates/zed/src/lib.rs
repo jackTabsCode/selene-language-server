@@ -14,7 +14,7 @@ impl zed::Extension for Extension {
     ) -> zed::Result<zed::Command> {
         let path = worktree
             .which("selene-language-server")
-            .ok_or_else(|| "selene-language-server is not installed".to_string())?;
+            .ok_or_else(|| "Failed to run selene-language-server".to_string())?;
 
         Ok(zed::Command {
             command: path,

@@ -1,4 +1,5 @@
-use tower_lsp::jsonrpc::Result;
+use tokio::process;
+use tower_lsp::jsonrpc::{self, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -14,6 +15,26 @@ struct Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+        match process::Command::new("selene")
+            .arg("--version")
+            .output()
+            .await
+        {
+            Ok(output) => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                self.client
+                    .log_message(MessageType::INFO, format!("Found {version}"))
+                    .await;
+            }
+            Err(err) => {
+                return Err(jsonrpc::Error {
+                    code: jsonrpc::ErrorCode::InternalError,
+                    message: format!("Failed to run selene: {err}").into(),
+                    data: None,
+                });
+            }
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 // Selene can only accept full files
@@ -29,7 +50,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         self.client
-            .log_message(MessageType::INFO, "server initialized!")
+            .log_message(MessageType::INFO, "Server initialized!")
             .await;
     }
 
@@ -58,36 +79,14 @@ impl LanguageServer for Backend {
             if diagnostic.source.as_deref() == Some("selene")
                 && let Some(NumberOrString::String(code)) = &diagnostic.code
             {
-                let title = format!("Allow rule {code} for this line");
-
-                let pos = Position::new(diagnostic.range.start.line, 0);
-
-                let edit = TextEdit {
-                    range: Range::new(pos, pos),
-                    new_text: format!("-- selene: allow({code})\n"),
-                };
-
-                let edit_workspace = WorkspaceEdit {
-                    changes: Some(
-                        [(params.text_document.uri.clone(), vec![edit])]
-                            .into_iter()
-                            .collect(),
-                    ),
-                    ..Default::default()
-                };
-
-                let action = CodeAction {
-                    title,
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![diagnostic.clone()]),
-                    edit: Some(edit_workspace),
-                    command: None,
-                    is_preferred: Some(true),
-                    disabled: None,
-                    data: None,
-                };
-
-                actions.push(CodeActionOrCommand::CodeAction(action));
+                for entire_file in [true, false] {
+                    actions.push(self.make_allow_action(
+                        diagnostic,
+                        &params.text_document.uri,
+                        code,
+                        entire_file,
+                    ));
+                }
             }
         }
 
@@ -95,6 +94,10 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
+        self.client
+            .log_message(MessageType::INFO, "Server shutting down!")
+            .await;
+
         Ok(())
     }
 }
@@ -106,6 +109,49 @@ impl Backend {
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
+    }
+
+    fn make_allow_action(
+        &self,
+        diagnostic: &Diagnostic,
+        uri: &Url,
+        code: &str,
+        entire_file: bool,
+    ) -> CodeActionOrCommand {
+        let (pos, prefix, title) = if entire_file {
+            (
+                Position::new(0, 0),
+                "--#",
+                format!("Allow rule {code} for the entire file"),
+            )
+        } else {
+            (
+                Position::new(diagnostic.range.start.line, 0),
+                "--",
+                format!("Allow rule {code} for this line"),
+            )
+        };
+
+        let edit = TextEdit {
+            range: Range::new(pos, pos),
+            new_text: format!("{prefix} selene: allow({code})\n"),
+        };
+
+        let edit_workspace = WorkspaceEdit {
+            changes: Some([(uri.clone(), vec![edit])].into_iter().collect()),
+            ..Default::default()
+        };
+
+        CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diagnostic.clone()]),
+            edit: Some(edit_workspace),
+            command: None,
+            is_preferred: Some(!entire_file),
+            disabled: None,
+            data: None,
+        })
     }
 }
 
